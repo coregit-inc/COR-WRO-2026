@@ -385,8 +385,7 @@ We experimented with adding a second ultrasonic sensor for side-wall detection. 
 
 ## 6. Videos
 
-- **Open Challenge:** [YouTube Link](https://youtube.com/watch?v=PLACEHOLDER_OPEN)
-- **Obstacle Challenge:** [YouTube Link](https://youtube.com/watch?v=PLACEHOLDER_OBSTACLE)
+- **Robot Overview & Open Challenge:** [YouTube Link](https://www.youtube.com/watch?v=JQQ1poCE1og)
 
 Each video shows the vehicle completing at least 30 seconds of autonomous driving.
 
