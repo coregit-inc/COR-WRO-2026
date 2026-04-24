@@ -1,0 +1,229 @@
+folder "prjs" "WRO_OPEN"
+
+import "Mods\Gyro"
+import "Mods\Ultrasonic"
+
+' ====================================================================
+' WRO Open Challenge 2026
+'
+' Конфигурация машины (Ackermann steering):
+'   Мотор A - РУЛЕВОЙ (перед, поворачивает колёса)
+'   Моторы B и C - задний привод (газ, крутятся синхронно)
+'   Порт 1 - УЗ слева
+'   Порт 2 - УЗ справа
+'   Порт 3 - гироскоп
+'
+' ====================================================================
+
+' --------------------- НАСТРОЙКИ ---------------------
+@speed = -80           ' газ задних моторов (минус = вперед)
+@maxSteer = 23            ' максимальный угол руля (градусы энкодера мотора A)
+@cornerDist = 200         ' см: если УЗ > этого значения - впереди угол
+@turnAngle = 80           ' градусов гироскопа на один поворот трассы
+
+' PD для следования по центру коридора
+@kp = 0.94
+@kd = 0.2
+
+' Глобальные
+@oldE = 0
+@turns = 0
+@lastTurnTime = 0         ' время последнего поворота
+@maxDeviation = 50        ' макс отклонение курса на прямой (градусы гиро)
+@headingKp = 1.6          ' сила коррекции когда курс уехал
+@direction = 0            ' 0=не знаем, 1=по часовой, -1=против
+
+' --------------------- ИНИЦИАЛИЗАЦИЯ ---------------------
+Motor.ResetCount("A")             ' руль в центре (поставь физически ровно!)
+Motor.Stop("BC", "true")
+
+Gyro.reset(3)
+Program.Delay(500)
+
+LCD.Clear()
+
+LCD.Write(10, 40, "Press ENTER")
+LCD.Write( 15, 20, EV3.BatteryVoltage)
+Ultrasonic.getCm(1, tmpL)
+Ultrasonic.getCm(2, tmpR)
+LCD.Write( 65, 70, tmpL)
+LCD.Write( 95, 90, tmpR)
+
+LCD.Update()
+
+Speaker.Tone(80, 600, 200)
+
+' Ждём нажатия любой кнопки
+While Buttons.Current <> ""
+EndWhile
+While Buttons.Current = ""
+EndWhile
+
+' --------------------- ФУНКЦИИ ---------------------
+
+Function SetSteer(in number angle)
+  ' Инверсия направления руля
+  angle = 0 - angle
+
+  ' Ограничение угла
+  If angle > @maxSteer Then
+    angle = @maxSteer
+  ElseIf angle < -@maxSteer Then
+    angle = 0-@maxSteer
+  EndIf
+
+  ' P-контроллер: стабильная отрицательная обратная связь
+  curA = MotorA.GetTacho()
+  err = angle - curA
+  pwr = err * 2
+
+  If pwr > 80 Then
+    pwr = 80
+  ElseIf pwr < -80 Then
+    pwr = -80
+  EndIf
+
+  MotorA.StartPower(pwr)
+EndFunction
+
+
+Function FollowCenter(in number lCm, in number rCm)
+  ' PD по разности — стремится к центру
+  E = rCm - lCm
+  P = E * @kp
+  D = (E - @oldE) * @kd
+  steer = P + D
+  @oldE = E
+
+  ' Гиро-ограничение: если робот развернулся слишком сильно — рулить обратно
+  Gyro.getAngle(3, curH)
+  deviation = curH - (@turns * @turnAngle * @direction)
+
+  If deviation > @maxDeviation Then
+    ' Повёрнут слишком вправо — руль влево
+    steer = (0 - deviation) * @headingKp
+  ElseIf deviation < (0 - @maxDeviation) Then
+    ' Повёрнут слишком влево — руль вправо
+    steer = (0 - deviation) * @headingKp
+  EndIf
+
+  SetSteer(steer)
+
+  ' Газ
+  Motor.StartPower("BC", @speed)
+EndFunction
+
+
+Function TurnCorner(in number lCm, in number rCm)
+    Speaker.Tone(50, 800, 100)
+
+  ' Определяем сторону поворота: туда где больше места
+  dir = 1
+  If lCm > rCm Then
+    dir = -1
+  EndIf
+
+  ' Едем прямо перед поворотом
+  t0 = Time.Get2()
+  While Time.Get2() - t0 < 150
+    SetSteer(0)
+    Motor.StartPower("BC", @speed)
+    Program.Delay(10)
+  EndWhile
+
+  ' Запоминаем стартовый угол
+  Gyro.getAngle(3, startA)
+
+  ' Сбавляем газ на повороте
+  Motor.StartPower("BC", -80)
+
+  exit = 0
+  While exit = 0
+    SetSteer(dir * @maxSteer)
+    Motor.StartPower("BC", -80)
+    Gyro.getAngle(3, curA2)
+
+    ' Прошли нужный угол - поворот засчитан
+    If Math.Abs(curA2 - startA) >= @turnAngle Then
+      exit = 1
+    EndIf
+
+    Program.Delay(10)
+  EndWhile
+
+  ' Сразу выравниваем руль
+  SetSteer(0)
+  @turns = @turns + 1
+
+  ' После первого поворота определяем направление по гиро
+  If @direction = 0 Then
+    Gyro.getAngle(3, afterH)
+    If afterH > 0 Then
+      @direction = 1
+    Else
+      @direction = -1
+    EndIf
+  EndIf
+
+  Speaker.Tone(50, 800, 100)
+
+  ' Едем пока оба датчика не увидят стены
+  done = 0
+  While done = 0
+    Motor.StartPower("BC", @speed)
+    Ultrasonic.getCm(1, tmpL)
+    Ultrasonic.getCm(2, tmpR)
+    If tmpL < @cornerDist And tmpR < @cornerDist Then
+      steerErr = tmpR - tmpL
+      SetSteer(steerErr * @kp)
+      done = 1
+    Else
+      SetSteer(0)
+    EndIf
+    Program.Delay(10)
+  EndWhile
+
+  ' Проезжаем вглубь коридора чтобы не засчитать повторный поворот
+  t2 = Time.Get2()
+  While Time.Get2() - t2 < 160
+    SetSteer(0)
+    Motor.StartPower("BC", @speed)
+    Program.Delay(10)
+  EndWhile
+
+  Ultrasonic.getCm(1, tmpL)
+  Ultrasonic.getCm(2, tmpR)
+  @oldE = tmpR - tmpL
+  @lastTurnTime = Time.Get2()
+EndFunction
+
+
+' --------------------- ОСНОВНОЙ ЦИКЛ ---------------------
+' 3 круга = 12 поворотов
+
+While @turns < 12
+  Ultrasonic.getCm(1, L)
+  Ultrasonic.getCm(2, R)
+
+  If (L > @cornerDist Or R > @cornerDist) And (Time.Get2() - @lastTurnTime > 800) Then
+    TurnCorner(L, R)
+  Else
+    FollowCenter(L, R)
+  EndIf
+
+  Program.Delay(20)
+EndWhile
+
+' --------------------- ФИНИШ ---------------------
+' Катим немного прямо и тормозим в стартовой секции
+
+t0 = Time.Get2()
+While Time.Get2() - t0 < 500
+  SetSteer(0)
+  Motor.StartPower("BC", @speed)
+  Program.Delay(10)
+EndWhile
+
+Motor.Stop("BC", "true")
+MotorA.StartPower(0)
+Speaker.Tone(100, 1000, 500)
