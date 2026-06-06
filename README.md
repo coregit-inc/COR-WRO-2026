@@ -8,6 +8,7 @@
 **Members:** Ayazhan Tayapbergenova, Niyazbek Yelnar
 **Country:** Kazakhstan
 **Season:** WRO 2026 Future Engineers
+**Video of the robot:**https://youtu.be/eBb__N2HGGs?si=X-EJuVbEj1Q7LhSt
 
 ---
 
